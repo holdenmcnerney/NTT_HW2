@@ -1,0 +1,8 @@
+icp_sat<#>.txt
+--------------
+Note on file name: satellite number corresponds to numbering 1-32
+col 1: TIME (GPS Seconds of Week) [sec]
+col 2: CARRIER PHASE [cycles]
+col 6: CYCLE SLIP COUNTER
+col 7: SNR
+col 8: PSEUDORANGE [m]

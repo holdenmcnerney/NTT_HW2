@@ -1,0 +1,10 @@
+ecef_rx0.txt
+------------
+col 1: TIME (GPS Seconds of Week) [sec]
+col 2: GPS WEEK [sec]
+col 3: X ECEF (WGS84) [m]
+col 4: Y ECEF (WGS84) [m]
+col 5: Z ECEF (WGS84) [m]
+col 6: VX [m/s]
+col 7: VY [m/s]
+col 8: VZ [m/s]
