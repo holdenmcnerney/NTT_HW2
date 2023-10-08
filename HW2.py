@@ -1,7 +1,8 @@
 #!/bin/python3
 
 import navpy 
-import numpy as np   
+import numpy as np
+import numpy.linalg as npl
 import gps_data_parser as gdp
 
 def ecef_base_avg(filepath: str):
@@ -35,7 +36,7 @@ def los_vectors(base_location: np.array, rinex_data: dict, \
 
         for orbits in orbit_ned:
             
-            distance = np.linalg.norm(orbits)
+            distance = npl.norm(orbits)
             los_vec = orbits / distance
             elevation = np.arcsin(-los_vec[2])
             los_vector = np.vstack((los_vector, los_vec))
@@ -114,12 +115,11 @@ def find_vis_sv(icp_data_rover: dict, time: float, sv_list: list):
 def guass_newton(ref_loc: np.array, pseudorange: np.array, \
                  sv_loc: np.array):
 
-    beta = [0, 0, 0.0000000000001]
-    f_x_b_vec = np.array([0])
+    beta = [0, 0, 0]
     delta_k = np.array([0, 0, 0])
     first = True
 
-    while ((np.linalg.norm(delta_k) / np.linalg.norm(beta)) > 0.001 or first):
+    while (first or (npl.norm(delta_k) / npl.norm(beta)) > 0.001):
 
         first = False
 
@@ -128,30 +128,28 @@ def guass_newton(ref_loc: np.array, pseudorange: np.array, \
 
         for sv in sv_loc:
 
-            f_x_b = (np.linalg.norm(beta - sv) - np.linalg.norm(sv)) \
-                    - (np.linalg.norm(beta - ref_loc) - np.linalg.norm(ref_loc))
-            jacobian = (beta - sv) / np.linalg.norm(beta - sv) \
-                    - (beta - ref_loc) / np.linalg.norm(beta - ref_loc)
+            f_x_b = (npl.norm(beta - sv) - npl.norm(sv)) \
+                    - (npl.norm(beta - ref_loc) - npl.norm(ref_loc))
+            jacobian = (beta - sv) / npl.norm(beta - sv) \
+                    - (beta - ref_loc) / npl.norm(beta - ref_loc)
             f_x_b_vec = np.vstack((f_x_b_vec, f_x_b))
             jacobian_vec = np.vstack((jacobian_vec, jacobian))
 
         f_x_b_vec = np.delete(f_x_b_vec, 0, axis=0)
         jacobian_vec = np.delete(jacobian_vec, 0, axis=0)
-        # jacobian = (beta - sv_loc) / np.linalg.norm(beta - sv_loc) \
-        #             - (beta - ref_loc) / np.linalg.norm(beta - ref_loc)
-        delta_k = np.linalg.inv(np.matrix.transpose(jacobian_vec) @ jacobian_vec) \
-                    @ np.matrix.transpose(jacobian_vec) @ (pseudorange - f_x_b_vec)
-        beta += np.matrix.transpose(delta_k)
+        delta_k = npl.inv(np.transpose(jacobian_vec) @ jacobian_vec) \
+                    @ np.transpose(jacobian_vec) @ (pseudorange - f_x_b_vec)
+        beta += np.transpose(delta_k)
 
-        delta =(np.linalg.norm(delta_k) / np.linalg.norm(beta))
+        delta =(npl.norm(delta_k) / npl.norm(beta))
 
-        pass
+    return beta
 
-    beta_optimal = beta
+def dd_pseudo_position(icp_data_rover: dict, icp_data_base: np.array, \
+                        ref_svs: np.array, sv_list: list):
 
-    return beta_optimal
-
-def dd_pseudo_position(icp_data_rover: dict, ref_svs: np.array, sv_list: list):
+    rover_loc_hist = np.array([0, 0, 0])
+    time_hist = np.array([0])
 
     for time in ref_svs[:, 0]:
 
@@ -167,21 +165,33 @@ def dd_pseudo_position(icp_data_rover: dict, ref_svs: np.array, sv_list: list):
 
             for sv in visible_sv:
 
-                current_sv_idx = np.absolute(icp_data_rover[sv][:, 1] \
-                                             - time).argmin()
-                pseudorange = icp_data_rover[sv][current_sv_idx, 0]
-                sv_loc_ned = icp_data_rover[sv][current_sv_idx, 2:5]
-                pseudorange_vec = np.vstack((pseudorange_vec, pseudorange))
-                sv_loc_vec = np.vstack((sv_loc_vec, sv_loc_ned))
-                pass
+                if sv is not int(ref_svs[ref_idx, 1]):
+                        
+                    current_sv_rover_idx = np.absolute(icp_data_rover[sv][:, 1] \
+                                                - time).argmin()
+                    current_sv_base_idx = np.absolute(icp_data_base[sv][:, 1] \
+                                                - time).argmin()
+                    pseudorange_rover = icp_data_rover[sv][current_sv_rover_idx, 0]
+                    pseudorange_rover_ref = icp_data_rover[ref_svs[ref_idx, 1]][current_sv_rover_idx, 0]
+                    pseuorange_base = icp_data_base[sv][current_sv_base_idx, 0]
+                    pseudorange_base_ref = icp_data_base[ref_svs[ref_idx, 1]][current_sv_base_idx, 0]
+                    double_diff_pseudo = (pseudorange_rover - pseuorange_base) \
+                                        - (pseudorange_rover_ref - pseudorange_base_ref)
+                    sv_loc_ned = icp_data_rover[sv][current_sv_rover_idx, 2:5]
+                    pseudorange_vec = np.vstack((pseudorange_vec,double_diff_pseudo))
+                    sv_loc_vec = np.vstack((sv_loc_vec, sv_loc_ned))
+
         
             pseudorange_vec = np.delete(pseudorange_vec, 0, axis=0)
             sv_loc_vec = np.delete(sv_loc_vec, 0, axis=0)
-            guass_newton(ref_loc_ned, pseudorange_vec, sv_loc_vec)
+            rover_loc = guass_newton(ref_loc_ned, pseudorange_vec, sv_loc_vec)
+            rover_loc_hist = np.vstack((rover_loc_hist, rover_loc))
+            time_hist = np.vstack((time_hist, time))
 
-        pass
+    rover_loc_hist = np.delete(rover_loc_hist, 0, axis=0)
+    time_hist = np.delete(time_hist, 0, axis=0)
 
-    return 0
+    return time_hist, rover_loc_hist
 
 def main():
 
@@ -197,7 +207,8 @@ def main():
     icp_data_rover = rover_icp_load(avg_base_lla, rinex_data, \
                                     start_time, end_time, sv_list)
     ref_svs = ref_sv(icp_data_base, sv_list)
-    dd_pseudo_position(icp_data_rover, ref_svs, sv_list)
+    time, rover_loc = dd_pseudo_position(icp_data_rover, icp_data_base, \
+                                          ref_svs, sv_list)
     
     pass
 
