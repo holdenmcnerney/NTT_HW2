@@ -3,6 +3,7 @@
 import navpy 
 import numpy as np
 import numpy.linalg as npl
+import matplotlib.pyplot as plt
 import gps_data_parser as gdp
 
 def ecef_base_avg(filepath: str):
@@ -79,7 +80,7 @@ def ref_sv(icp_data: dict, sv_list: list):
     for time in icp_data[12][:, 1]:
         
         max_elevation = 0
-        max_sv = 0
+        max_elev_sv = 0
         for sv in sv_list:
 
             idx = np.where(icp_data[sv][:, 1] == time)
@@ -89,16 +90,17 @@ def ref_sv(icp_data: dict, sv_list: list):
                 icp_data[sv][idx, 8] > max_elevation:
 
                 max_elevation = elevation[0][0]
-                max_sv = sv
+                max_elev_sv = sv
 
-        current_ref = np.array([time, max_sv, max_elevation])
+        current_ref = np.array([time, max_elev_sv, max_elevation])
         ref_sv = np.vstack((ref_sv, current_ref))
 
     ref_sv = np.delete(ref_sv, 0, axis=0)
 
     return ref_sv
 
-def find_vis_sv(icp_data_rover: dict, time: float, sv_list: list):
+def find_vis_sv(icp_data_rover: dict, icp_data_base: np.array, \
+                 time: float, sv_list: list):
     
     num_sv = 0
 
@@ -106,7 +108,8 @@ def find_vis_sv(icp_data_rover: dict, time: float, sv_list: list):
 
     for sv in sv_list:
 
-        if abs(icp_data_rover[sv][:, 1] - time).min() < 0.001:
+        if abs(icp_data_rover[sv][:, 1] - time).min() < 0.001 and \
+            abs(icp_data_base[sv][:, 1] - time).min() < 0.001:
 
             visible_sv.append(sv)
 
@@ -119,7 +122,7 @@ def guass_newton(ref_loc: np.array, pseudorange: np.array, \
     delta_k = np.array([0, 0, 0])
     first = True
 
-    while (first or (npl.norm(delta_k) / npl.norm(beta)) > 0.001):
+    while (first or (npl.norm(delta_k) / npl.norm(beta)) >  0.0001):
 
         first = False
 
@@ -153,11 +156,16 @@ def dd_pseudo_position(icp_data_rover: dict, icp_data_base: np.array, \
 
     for time in ref_svs[:, 0]:
 
-        visible_sv = find_vis_sv(icp_data_rover, time, sv_list)
+        visible_sv = find_vis_sv(icp_data_rover, icp_data_base, time, sv_list)
         ref_idx = np.where(ref_svs[:, 0] == time)[0][0]
-        ref_loc_idx = np.absolute(icp_data_rover[ref_svs[ref_idx, 1]][:, 1] \
+        ref_sv_num = ref_svs[ref_idx, 1]
+        ref_loc_rover_idx = np.absolute(icp_data_rover[ref_sv_num][:, 1] \
                                        - time).argmin()
-        ref_loc_ned = icp_data_rover[ref_svs[ref_idx, 1]][ref_loc_idx, 2:5]
+        ref_loc_base_idx = np.absolute(icp_data_base[ref_sv_num][:, 1] \
+                                       - time).argmin()
+        ref_loc_ned = icp_data_rover[ref_sv_num][ref_loc_rover_idx, 2:5]
+        pseudorange_base_ref = icp_data_base[ref_sv_num][ref_loc_base_idx, 0]
+        
         pseudorange_vec = np.array([0])
         sv_loc_vec = np.array([0, 0, 0])
 
@@ -165,23 +173,21 @@ def dd_pseudo_position(icp_data_rover: dict, icp_data_base: np.array, \
 
             for sv in visible_sv:
 
-                if sv is not int(ref_svs[ref_idx, 1]):
+                if sv is not int(ref_sv_num):
                         
                     current_sv_rover_idx = np.absolute(icp_data_rover[sv][:, 1] \
                                                 - time).argmin()
                     current_sv_base_idx = np.absolute(icp_data_base[sv][:, 1] \
                                                 - time).argmin()
                     pseudorange_rover = icp_data_rover[sv][current_sv_rover_idx, 0]
-                    pseudorange_rover_ref = icp_data_rover[ref_svs[ref_idx, 1]][current_sv_rover_idx, 0]
-                    pseuorange_base = icp_data_base[sv][current_sv_base_idx, 0]
-                    pseudorange_base_ref = icp_data_base[ref_svs[ref_idx, 1]][current_sv_base_idx, 0]
-                    double_diff_pseudo = (pseudorange_rover - pseuorange_base) \
+                    pseudorange_rover_ref = icp_data_rover[ref_sv_num][ref_loc_rover_idx, 0]
+                    pseudorange_base = icp_data_base[sv][current_sv_base_idx, 0]
+                    double_diff_pseudo = (pseudorange_rover - pseudorange_base) \
                                         - (pseudorange_rover_ref - pseudorange_base_ref)
                     sv_loc_ned = icp_data_rover[sv][current_sv_rover_idx, 2:5]
                     pseudorange_vec = np.vstack((pseudorange_vec,double_diff_pseudo))
                     sv_loc_vec = np.vstack((sv_loc_vec, sv_loc_ned))
 
-        
             pseudorange_vec = np.delete(pseudorange_vec, 0, axis=0)
             sv_loc_vec = np.delete(sv_loc_vec, 0, axis=0)
             rover_loc = guass_newton(ref_loc_ned, pseudorange_vec, sv_loc_vec)
@@ -210,7 +216,10 @@ def main():
     time, rover_loc = dd_pseudo_position(icp_data_rover, icp_data_base, \
                                           ref_svs, sv_list)
     
-    pass
+    plt.plot(rover_loc[:, 1], rover_loc[:, 0])
+    plt.grid()
+    plt.show()
 
 if __name__ == "__main__":
+
     main()
