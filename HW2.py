@@ -2,7 +2,6 @@
 
 import navpy 
 import numpy as np
-import matplotlib as mpl
 import numpy.linalg as npl
 import matplotlib.pyplot as plt
 import gps_data_parser as gdp
@@ -40,7 +39,7 @@ def los_vectors(base_location: np.array, rinex_data: dict, \
 
         icp_base = gdp.parse_icp(f"./data_base/icp_sat{sv}.txt", \
                                 np.array([start_time,end_time]))
-        pseudorange = icp_base[0][0]
+        p_range = icp_base[0][0]
         trans_times = icp_base[0][1]
         orbit_ecef = rinex_data[str(sv)].calculate_orbit(trans_times)
         orbit_ned = navpy.ecef2ned(orbit_ecef, base_location[0], \
@@ -60,7 +59,7 @@ def los_vectors(base_location: np.array, rinex_data: dict, \
 
         los_vector = np.delete(los_vector, 0, axis=0)
         elevation_vec = np.delete(elevation_vec, 0, axis=0)
-        icp_array = np.column_stack([pseudorange, trans_times, orbit_ned, \
+        icp_array = np.column_stack([p_range, trans_times, orbit_ned, \
                                      los_vector, elevation_vec])
         icp_data_struct[sv] = icp_array
 
@@ -83,14 +82,14 @@ def rover_icp_load(base_location: np.array, rinex_data: dict, \
 
         icp_base = gdp.parse_icp(f"./data_rover/icp_sat{sv}.txt", \
                                 np.array([start_time,end_time]))
-        pseudorange = icp_base[0][0]
+        p_range = icp_base[0][0]
         trans_times = icp_base[0][1]
         orbit_ecef = rinex_data[str(sv)].calculate_orbit(trans_times)
         orbit_ned = navpy.ecef2ned(orbit_ecef, base_location[0], \
                                    base_location[1], base_location[2], \
                                     latlon_unit='rad', alt_unit='m', \
                                     model='wgs84')
-        icp_array = np.column_stack([pseudorange, trans_times, orbit_ned])
+        icp_array = np.column_stack([p_range, trans_times, orbit_ned])
         icp_data_struct[sv] = icp_array
 
     return icp_data_struct
@@ -149,7 +148,7 @@ def find_vis_sv(icp_data_rover: dict, icp_data_base: np.array, \
 
     return visible_sv
 
-def guass_newton(ref_loc: np.array, pseudorange: np.array, \
+def guass_newton(ref_loc: np.array, p_range: np.array, \
                  sv_loc: np.array):
     '''
     Solves a NLS problem with GNA at timestamp
@@ -181,7 +180,7 @@ def guass_newton(ref_loc: np.array, pseudorange: np.array, \
         f_x_b_vec = np.delete(f_x_b_vec, 0, axis=0)
         jacobian_vec = np.delete(jacobian_vec, 0, axis=0)
         cov_beta = npl.inv(np.transpose(jacobian_vec) @ jacobian_vec)
-        delta_k = cov_beta @ np.transpose(jacobian_vec) @ (pseudorange - f_x_b_vec)
+        delta_k = cov_beta @ np.transpose(jacobian_vec) @ (p_range - f_x_b_vec)
         beta += np.transpose(delta_k)
         vdop = np.sqrt(cov_beta[2][2])
         hdop = np.sqrt(cov_beta[0][0] + cov_beta[1][1])
@@ -211,14 +210,15 @@ def dd_pseudo_position(icp_data_rover: dict, icp_data_base: np.array, \
         visible_sv = find_vis_sv(icp_data_rover, icp_data_base, time, sv_list)
         ref_idx = np.where(ref_svs[:, 0] == time)[0][0]
         ref_sv_num = ref_svs[ref_idx, 1]
+        # Finds index for ref transmitter to rover/base at timestamp
         ref_loc_rover_idx = np.absolute(icp_data_rover[ref_sv_num][:, 1] \
                                        - time).argmin()
         ref_loc_base_idx = np.absolute(icp_data_base[ref_sv_num][:, 1] \
                                        - time).argmin()
         ref_loc_ned = icp_data_rover[ref_sv_num][ref_loc_rover_idx, 2:5]
-        pseudorange_base_ref = icp_data_base[ref_sv_num][ref_loc_base_idx, 0]
+        p_range_base_ref = icp_data_base[ref_sv_num][ref_loc_base_idx, 0]
         
-        pseudorange_vec = np.array([0])
+        p_range_vec = np.array([0])
         sv_loc_vec = np.array([0, 0, 0])
 
         if len(visible_sv) >= 4:
@@ -227,25 +227,26 @@ def dd_pseudo_position(icp_data_rover: dict, icp_data_base: np.array, \
 
                 if sv is not int(ref_sv_num):
                     
-                    # Find indexes and pseudoranges of sv at timestamp and stack
-                    # pseudorange and sv location (in NED) arrays 
+                    # Find indexes and p_ranges of sv at timestamp and stack
+                    # p_range and sv location (in NED) arrays 
                     current_sv_rover_idx = np.absolute(icp_data_rover[sv][:, 1] \
                                                 - time).argmin()
                     current_sv_base_idx = np.absolute(icp_data_base[sv][:, 1] \
                                                 - time).argmin()
-                    pseudorange_rover = icp_data_rover[sv][current_sv_rover_idx, 0]
-                    pseudorange_rover_ref = icp_data_rover[ref_sv_num][ref_loc_rover_idx, 0]
-                    pseudorange_base = icp_data_base[sv][current_sv_base_idx, 0]
-                    double_diff_pseudo = (pseudorange_rover - pseudorange_base) \
-                                        - (pseudorange_rover_ref - pseudorange_base_ref)
+                    p_range_rover = icp_data_rover[sv][current_sv_rover_idx, 0]
+                    p_range_rover_ref = icp_data_rover[ref_sv_num][ref_loc_rover_idx, 0]
+                    p_range_base = icp_data_base[sv][current_sv_base_idx, 0]
+                    double_diff_pseudo = (p_range_rover - p_range_base) \
+                                        - (p_range_rover_ref - p_range_base_ref)
                     sv_loc_ned = icp_data_rover[sv][current_sv_rover_idx, 2:5]
-                    pseudorange_vec = np.vstack((pseudorange_vec,double_diff_pseudo))
+                    p_range_vec = np.vstack((p_range_vec, double_diff_pseudo))
                     sv_loc_vec = np.vstack((sv_loc_vec, sv_loc_ned))
 
-            pseudorange_vec = np.delete(pseudorange_vec, 0, axis=0)
+            p_range_vec = np.delete(p_range_vec, 0, axis=0)
             sv_loc_vec = np.delete(sv_loc_vec, 0, axis=0)
             # Calculate rover location at timestamp with inputs from above
-            rover_loc, vdop, hdop = guass_newton(ref_loc_ned, pseudorange_vec, sv_loc_vec)
+            rover_loc, vdop, hdop = guass_newton(ref_loc_ned, p_range_vec, \
+                                                 sv_loc_vec)
             rover_loc_hist = np.vstack((rover_loc_hist, rover_loc))
             time_hist = np.vstack((time_hist, time))
             vdop_hist = np.vstack((vdop_hist, vdop))
